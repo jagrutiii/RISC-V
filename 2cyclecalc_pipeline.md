@@ -6,196 +6,167 @@ To design and implement a two-cycle arithmetic calculator using TL-Verilog. The 
 
 ---
 
-## Overview
+## Theory
 
-Modern digital systems often require high operating frequencies. As the complexity of arithmetic logic increases, completing all operations within a single clock cycle becomes challenging. A practical solution is to split the computation across multiple pipeline stages.
+As clock frequencies increase, performing all arithmetic operations within a single cycle becomes increasingly difficult due to timing limitations. Pipelining helps overcome this issue by dividing the computation into multiple stages and allowing data to move progressively through the design.
 
-This calculator generates results after two cycles and uses a validity mechanism to ensure that outputs are produced only when meaningful data is available.
-
----
-
-## Pipeline Architecture
-
-The design is organized into three pipeline stages:
-
-| Stage | Function |
-|---------|---------|
-| @0 | Reset and initialization |
-| @1 | Operand processing and arithmetic operations |
-| @2 | Result selection and output generation |
-
-Separating tasks across stages reduces combinational delay and improves overall timing behavior.
+In this experiment, the calculator output is generated after two cycles. A validity signal controls when outputs are accepted, while a delayed feedback path ensures proper synchronization between pipeline stages. The design also demonstrates retiming, which helps improve timing performance without changing functionality.
 
 ---
 
-## Initialization Stage
+## Code
 
-### Stage @0
+```tl-verilog
+\m4_TLV_version 1d: tl-x.org
+\SV
+   // This code can be found in: https://github.com/stevehoover/RISC-V_MYTH_Workshop
 
-The first stage handles reset management.
+   m4_include_lib(['https://raw.githubusercontent.com/stevehoover/RISC-V_MYTH_Workshop/ecba3769fff373ef6b8f66b3347e8940c859792d/tlv_lib/calculator_shell_lib.tlv'])
 
-### Purpose
+\SV
+   m4_makerchip_module
 
-- Initializes the calculator state.
-- Clears previously stored values.
-- Ensures predictable startup behavior.
-- Prevents undefined outputs during simulation.
+\TLV
+   |calc
 
-The reset signal acts as the starting point for all subsequent pipeline activity.
+      @0
+         $reset = *reset;
 
----
+      @1
+         // Alternate-cycle valid generation
+         $toggle[0:0] = $reset ? 1'b0 : ~>>1$toggle;
+         $enable = $toggle;
 
-## Alternate-Cycle Computation Control
+         // Feedback path from output delayed by 2 cycles
+         $feedback[31:0] = >>2$out[31:0];
 
-A single-bit toggle register is used to generate the enable signal for computation.
+         // Random operand and operation selection
+         $operand[31:0] = $rand2[3:0];
+         $opcode[1:0]   = $rand1[1:0];
 
-### Operation
+         // Arithmetic operations
+         $add_res[31:0] = $feedback + $operand;
+         $sub_res[31:0] = $feedback - $operand;
+         $mul_res[31:0] = $feedback * $operand;
 
-The bit alternates between logic 0 and logic 1 on every clock edge:
+         $div_res[31:0] =
+            ($operand == 0) ? 32'b0 :
+                              ($feedback / $operand);
 
-```text
-0 → 1 → 0 → 1 → 0 ...
+      @2
+         // Retimed output multiplexer
+         $out[31:0] =
+            ($reset || !$enable) ? 32'b0 :
+            ($opcode == 2'b00)  ? $add_res :
+            ($opcode == 2'b01)  ? $sub_res :
+            ($opcode == 2'b10)  ? $mul_res :
+                                  $div_res;
+
+   *passed = *cyc_cnt > 40;
+   *failed = 1'b0;
+
+\SV
+   endmodule
 ```
 
-This pattern creates computation windows only on alternate cycles.
-
-### Advantages
-
-- Demonstrates multi-cycle execution.
-- Controls when outputs are allowed to propagate.
-- Mimics realistic timing constraints found in complex hardware.
-
 ---
 
-## Feedback Alignment
+## Design Flow
 
-The calculator reuses previously generated outputs as future inputs through a delayed feedback path.
+### Stage @0 – Reset Initialization
 
-### Concept
+The first pipeline stage initializes the reset signal and prepares the calculator for operation. During reset, all internal states are cleared, ensuring predictable behavior when execution begins.
 
-The output is routed back after a two-stage delay to maintain synchronization with the pipeline structure.
+### Stage @1 – Computation and Control
 
-### Why Feedback Delay Is Needed
+The second stage performs most of the processing.
 
-Since the final result is produced in stage `@2`, feedback data must be delayed by the same number of stages before reuse.
+#### Toggle-Based Enable Signal
 
-This ensures:
+A single-bit toggle register changes state every clock cycle. This signal acts as an enable mechanism, allowing computations to proceed only during alternate cycles.
 
-- Correct timing alignment
-- Proper data dependency handling
-- Stable pipeline behavior
+#### Feedback Mechanism
 
----
+The calculator reuses previously generated outputs through a two-cycle delayed feedback path. Since the output is produced in stage `@2`, the feedback must also be delayed by two cycles to maintain proper timing alignment.
 
-## Arithmetic Computation Stage
+#### Arithmetic Processing
 
-### Supported Operations
-
-The calculator performs four arithmetic functions:
+Four arithmetic results are generated:
 
 - Addition
 - Subtraction
 - Multiplication
 - Division
 
-All arithmetic results are computed in the same pipeline stage and are later selected based on the operation code.
-
-### TL-Verilog Benefits
-
-TL-Verilog automatically manages:
-
-- Pipeline registers
-- Stage transitions
-- Signal synchronization
-
-This significantly reduces coding effort compared to conventional Verilog implementations.
+These calculations are performed in parallel and become available for selection in the next stage.
 
 ---
 
-## Output Generation Stage
+## Stage @2 – Output Selection
 
-### Result Selection
+The final pipeline stage selects one arithmetic result based on the operation code.
 
-The final stage chooses one arithmetic result and forwards it to the output.
-
-The operation selector determines whether the output corresponds to:
+The output multiplexer determines whether the calculator returns:
 
 - Sum
 - Difference
 - Product
 - Quotient
 
-### Output Validation
-
-The output is allowed only when the enable signal is active.
-
-If:
-
-- Reset is asserted, or
-- The computation cycle is invalid,
-
-the output is forced to zero.
-
-This prevents invalid pipeline data from reaching later stages.
+If reset is active or the enable signal is low, the output is forced to zero. This prevents invalid data from propagating through the pipeline.
 
 ---
 
-## Retiming Strategy
+## Retiming Implementation
 
-A key feature of this design is the movement of output-selection logic into a later pipeline stage.
+The output multiplexer is intentionally placed in stage `@2` instead of the arithmetic stage.
 
-### Purpose of Retiming
+This technique is known as **retiming**.
 
-Retiming helps to:
+### Benefits of Retiming
 
-- Reduce critical path delay
-- Improve timing closure
-- Support higher clock frequencies
-- Enhance design scalability
+- Reduces combinational logic delay
+- Improves timing closure
+- Supports higher clock frequencies
+- Enhances pipeline efficiency
 
-Instead of manually inserting registers, TL-Verilog allows retiming simply by changing stage annotations.
+TL-Verilog simplifies retiming by allowing logic movement through stage annotations rather than manual register insertion.
 
 ---
 
-## Execution Sequence
+## Pipeline Operation
 
 ### Cycle 1
-
 - Operands are generated.
-- Arithmetic calculations begin.
+- Arithmetic calculations are performed.
 
 ### Cycle 2
-
 - Result selection occurs.
-- Valid output is produced.
+- Valid output is generated.
 
 ### Cycle 3
-
-- Feedback data returns to the computation stage.
+- Delayed feedback returns to the computation stage.
 - New calculations begin.
 
 ### Cycle 4
+- Another valid output is produced.
 
-- Next valid output is generated.
-
-The process then continues in a repeating two-cycle pattern.
+This sequence continues repeatedly, creating a two-cycle computation pipeline.
 
 ---
 
-## Concepts Demonstrated
+## Features Demonstrated
 
-This experiment illustrates:
-
-- Multi-cycle arithmetic execution
-- Pipeline stage synchronization
-- Feedback path implementation
-- Validity-controlled output generation
-- Pipeline retiming techniques
-- Timing optimization
-- High-frequency datapath design
+- Two-cycle pipelined execution
+- Alternate-cycle result generation
+- Feedback synchronization using `>>2`
+- Validity-controlled outputs
+- Arithmetic datapath implementation
+- Retiming for timing optimization
+- TL-Verilog pipeline abstraction
 
 ---
 
 ## Conclusion
 
-A two-cycle pipelined calculator was successfully implemented using TL-Verilog. The design demonstrates how arithmetic operations can be distributed across multiple stages while maintaining correct timing relationships. By combining feedback synchronization, valid signal control, and retiming, the calculator achieves improved timing performance and serves as an effective example of pipeline-based digital design.
+A two-cycle pipelined calculator was successfully implemented using TL-Verilog. The design utilizes a delayed feedback path, alternate-cycle enable logic, and retimed output selection to improve timing performance. The experiment demonstrates how TL-Verilog simplifies the implementation of multi-stage pipelines while maintaining readability and scalability.
