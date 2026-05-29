@@ -1,4 +1,4 @@
-# Experiment: Pipeline Error Aggregation using TL-Verilog
+# Pipeline Error Aggregation using TL-Verilog
 
 ## Identifier Naming Rules in TL-Verilog
 
